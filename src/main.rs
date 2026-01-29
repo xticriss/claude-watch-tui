@@ -129,6 +129,7 @@ impl App {
         if let Some(session) = self.sessions.get(self.selected) {
             if let Some(pid) = session.pid {
                 unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+                tmux::notify(&format!("Killed: {}", session.project_name));
                 self.refresh_sessions();
             }
         }
@@ -143,7 +144,9 @@ impl App {
     fn delete_selected(&mut self) {
         if let Some(session) = self.sessions.get(self.selected) {
             if !session.is_running {
+                let name = session.project_name.clone();
                 session::delete_session(session);
+                tmux::notify(&format!("Deleted: {}", name));
                 self.refresh_sessions();
             }
         }

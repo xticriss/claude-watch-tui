@@ -54,6 +54,15 @@ pub fn switch_to_window(location: &TmuxLocation) {
         .status();
 }
 
+/// Show a brief notification in tmux status bar
+pub fn notify(msg: &str) {
+    if std::env::var("TMUX").is_ok() {
+        let _ = Command::new("tmux")
+            .args(["display-message", msg])
+            .status();
+    }
+}
+
 /// Create a new tmux window with claude --resume command
 pub fn new_window_with_command(window_name: &str, project_path: &str, session_id: &str) {
     let cmd = format!(
