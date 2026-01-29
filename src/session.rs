@@ -407,6 +407,7 @@ fn parse_project_session(
         is_local_command,
         is_interrupted,
         recently_modified,
+        cpu_usage,
     );
 
     // Extract project name
@@ -511,6 +512,8 @@ fn read_last_lines(path: &PathBuf, n: usize) -> Option<Vec<String>> {
     Some(lines)
 }
 
+const CPU_ACTIVE_THRESHOLD: f32 = 10.0;
+
 fn determine_status(
     role: Option<&str>,
     has_tool_use: bool,
@@ -518,16 +521,20 @@ fn determine_status(
     is_local_command: bool,
     is_interrupted: bool,
     recently_modified: bool,
+    cpu_usage: f32,
 ) -> SessionStatus {
+    // High CPU means Claude is actively working, even if file wasn't just modified
+    let is_active = recently_modified || cpu_usage > CPU_ACTIVE_THRESHOLD;
+
     match role {
         Some("assistant") => {
             if has_tool_use {
-                if recently_modified {
+                if is_active {
                     SessionStatus::Processing
                 } else {
                     SessionStatus::Waiting
                 }
-            } else if recently_modified {
+            } else if is_active {
                 SessionStatus::Processing
             } else {
                 SessionStatus::Waiting
@@ -538,19 +545,19 @@ fn determine_status(
             if is_local_command || is_interrupted {
                 SessionStatus::Waiting
             } else if has_tool_result {
-                if recently_modified {
+                if is_active {
                     SessionStatus::Thinking
                 } else {
                     SessionStatus::Waiting
                 }
-            } else if recently_modified {
+            } else if is_active {
                 SessionStatus::Thinking
             } else {
                 SessionStatus::Waiting
             }
         }
         _ => {
-            if recently_modified {
+            if is_active {
                 SessionStatus::Thinking
             } else {
                 SessionStatus::Idle
