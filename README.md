@@ -70,7 +70,8 @@ bind-key C-c display-popup -E -w 80% -h 80% "claude-watch"
 | `1-9` | Jump to session by number |
 | `Enter` | Go to session (switch to tmux window or resume) |
 | `r` | Resume session in new tmux window |
-| `x` | Kill selected session |
+| `x` | Kill selected running session |
+| `D` | Delete historical session (removes .jsonl file) |
 | `Tab` | Toggle between Running / All sessions |
 | `R` | Refresh session list |
 | `q` / `Esc` | Quit |

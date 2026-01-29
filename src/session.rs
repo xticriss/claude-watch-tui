@@ -71,6 +71,9 @@ pub struct Session {
     /// Creation timestamp (ISO format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Full path to the JSONL file (for deletion)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jsonl_path: Option<String>,
 }
 
 /// Entry from sessions-index.json
@@ -78,7 +81,6 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct SessionIndexEntry {
     session_id: String,
-    #[allow(dead_code)]
     full_path: String,
     first_prompt: Option<String>,
     message_count: u32,
@@ -253,6 +255,7 @@ pub fn get_all_sessions() -> Vec<Session> {
                             first_prompt: entry.first_prompt,
                             message_count: Some(entry.message_count),
                             created_at: Some(entry.created),
+                            jsonl_path: Some(entry.full_path),
                         });
                     }
                 }
@@ -417,6 +420,7 @@ fn parse_project_session(
         first_prompt: None,
         message_count: None,
         created_at: None,
+        jsonl_path: None,
     })
 }
 

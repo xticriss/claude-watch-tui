@@ -138,6 +138,21 @@ impl App {
         self.view_mode = self.view_mode.toggle();
         self.refresh_sessions();
     }
+
+    /// Delete a historical session's JSONL file
+    fn delete_selected(&mut self) {
+        if let Some(session) = self.sessions.get(self.selected) {
+            // Only delete historical sessions
+            if session.is_running {
+                return;
+            }
+            // Delete the JSONL file
+            if let Some(ref path) = session.jsonl_path {
+                let _ = std::fs::remove_file(path);
+                self.refresh_sessions();
+            }
+        }
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -189,6 +204,7 @@ fn main() -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('x') => app.kill_selected(),
+                        KeyCode::Char('D') => app.delete_selected(),
                         KeyCode::Tab => app.toggle_view_mode(),
                         // Number shortcuts 1-9
                         KeyCode::Char(c @ '1'..='9') => {
