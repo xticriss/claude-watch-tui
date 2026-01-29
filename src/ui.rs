@@ -2,6 +2,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Padding};
 
 use crate::session::{Session, SessionStatus};
+use crate::log_view::{self, LogMessage};
 
 // Rose Pine Moon colors (matching your tmux theme)
 const GOLD: Color = Color::Rgb(246, 193, 119);      // #f6c177
@@ -18,10 +19,22 @@ const TEXT: Color = Color::Rgb(224, 222, 244);      // #e0def4
 const SURFACE: Color = Color::Rgb(42, 39, 63);      // #2a273f
 const OVERLAY: Color = Color::Rgb(57, 53, 82);      // #393552
 
-pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize) {
+pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messages: &[LogMessage]) {
     let area = frame.area();
 
-    // Main container - minimal borders for sidebar
+    // Vertical stack: sessions on top, log below
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(18), // ~6 sessions visible (3 lines each)
+            Constraint::Min(5),     // Log takes remaining space
+        ])
+        .split(area);
+
+    let list_area = main_chunks[0];
+    let log_area = main_chunks[1];
+
+    // Left pane: session list
     let block = Block::default()
         .title(" Claude ")
         .title_style(Style::default().bold().fg(GOLD))
@@ -29,8 +42,11 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize) {
         .border_style(Style::default().fg(SUBTLE))
         .padding(Padding::horizontal(1));
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = block.inner(list_area);
+    frame.render_widget(block, list_area);
+
+    // Right pane: log view
+    log_view::render_log(frame, log_area, log_messages);
 
     if sessions.is_empty() {
         let empty_msg = Paragraph::new("No active sessions")
@@ -54,8 +70,8 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize) {
     let legend_area = chunks[1];
     let help_area = chunks[2];
 
-    // Compact cards: 3 lines each
-    let card_height = 3u16;
+    // Compact cards: 2 lines each (project+window, message)
+    let card_height = 2u16;
     let visible_cards = (sessions_area.height / card_height).max(1) as usize;
 
     // Scroll to keep selected visible
@@ -77,15 +93,13 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize) {
         y += card_height;
     }
 
-    // Legend bar
+    // Legend bar (matches tmux tab icons)
     let legend = Paragraph::new(Line::from(vec![
-        Span::styled("⚡ ", Style::default().fg(GOLD)),
-        Span::styled("think  ", Style::default().fg(SUBTLE)),
-        Span::styled("◐ ", Style::default().fg(PINE)),
-        Span::styled("proc  ", Style::default().fg(SUBTLE)),
-        Span::styled("● ", Style::default().fg(FOAM)),
+        Span::styled("↻ ", Style::default().fg(GOLD)),
+        Span::styled("work  ", Style::default().fg(SUBTLE)),
+        Span::styled("◐ ", Style::default().fg(FOAM)),
         Span::styled("wait  ", Style::default().fg(SUBTLE)),
-        Span::styled("○ ", Style::default().fg(SUBTLE)),
+        Span::styled("✓ ", Style::default().fg(SUBTLE)),
         Span::styled("idle", Style::default().fg(SUBTLE)),
     ])).alignment(Alignment::Center);
     frame.render_widget(legend, legend_area);
@@ -98,6 +112,8 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize) {
         Span::styled(" nav ", Style::default().fg(SUBTLE)),
         Span::styled("↵", Style::default().fg(FOAM)),
         Span::styled(" go ", Style::default().fg(SUBTLE)),
+        Span::styled("x", Style::default().fg(FOAM)),
+        Span::styled(" kill ", Style::default().fg(SUBTLE)),
         Span::styled("q", Style::default().fg(FOAM)),
         Span::styled(" quit", Style::default().fg(SUBTLE)),
     ])).alignment(Alignment::Center);
@@ -119,10 +135,10 @@ fn format_relative_time(secs: u64) -> String {
 
 fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selected: bool, index: usize) {
     let (status_icon, status_color) = match session.status {
-        SessionStatus::Thinking => ("⚡", GOLD),
-        SessionStatus::Processing => ("◐", PINE),
-        SessionStatus::Waiting => ("●", FOAM),
-        SessionStatus::Idle => ("○", SUBTLE),
+        SessionStatus::Thinking => ("↻", GOLD),      // working/thinking
+        SessionStatus::Processing => ("↻", PINE),    // working/processing
+        SessionStatus::Waiting => ("◐", FOAM),       // waiting for input
+        SessionStatus::Idle => ("✓", SUBTLE),        // idle/done
     };
 
     let bg_color = if selected { OVERLAY } else { Color::Reset };
@@ -143,7 +159,7 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
 
     let width = inner.width as usize;
 
-    // Line 1: [index] status icon + project name + relative time
+    // Line 1: [index] status icon + project name + [window#] + relative time
     if inner.height >= 1 {
         let line1_area = Rect::new(inner.x, inner.y, inner.width, 1);
 
@@ -160,12 +176,18 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
             " ".to_string()
         };
 
+        // Window number badge (compact)
+        let window_badge = session.tmux_location.as_ref()
+            .map(|l| format!(":{}", l.window_index))
+            .unwrap_or_default();
+
         // Relative time
         let time_str = format_relative_time(session.last_activity_secs);
-        let time_width = time_str.len() + 1; // +1 for spacing
+        let time_width = time_str.len() + 1;
 
         // Truncate project name if too long
-        let max_name_len = width.saturating_sub(6 + time_width); // index + icon + space + time
+        let badge_len = window_badge.chars().count();
+        let max_name_len = width.saturating_sub(6 + time_width + badge_len);
         let name = if session.project_name.len() > max_name_len {
             format!("{}…", &session.project_name[..max_name_len.saturating_sub(1)])
         } else {
@@ -173,33 +195,23 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
         };
 
         // Calculate padding for right-aligned time
-        let used_width = 4 + name.chars().count(); // "X ● name"
+        let used_width = 4 + name.chars().count() + badge_len;
         let padding = width.saturating_sub(used_width + time_width);
 
         let line1 = Line::from(vec![
             Span::styled(format!("{} ", index_str), Style::default().fg(SUBTLE)),
             Span::styled(format!("{} ", status_icon), Style::default().fg(status_color)),
             Span::styled(name, name_style),
+            Span::styled(window_badge, Style::default().fg(SUBTLE)),
             Span::styled(" ".repeat(padding), Style::default()),
             Span::styled(time_str, Style::default().fg(SUBTLE)),
         ]);
         frame.render_widget(Paragraph::new(line1), line1_area);
     }
 
-    // Line 2: tmux location
+    // Line 2: last message preview (shorter, cleaner)
     if inner.height >= 2 {
         let line2_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
-        let location = session.tmux_location.as_ref()
-            .map(|l| format!("    {}:{}", l.session, l.window_index))
-            .unwrap_or_else(|| "    —".to_string());
-
-        let line2 = Paragraph::new(location).style(Style::default().fg(SUBTLE));
-        frame.render_widget(line2, line2_area);
-    }
-
-    // Line 3: last message preview
-    if inner.height >= 3 {
-        let line3_area = Rect::new(inner.x, inner.y + 2, inner.width, 1);
         let message = session.last_message.as_deref().unwrap_or("—");
 
         // Clean up message: remove newlines, collapse whitespace
@@ -211,14 +223,14 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
             .collect::<Vec<_>>()
             .join(" ");
 
-        let max_len = width.saturating_sub(4);
+        let max_len = width.saturating_sub(6);
         let truncated = if clean_msg.chars().count() > max_len {
             format!("    {}…", clean_msg.chars().take(max_len.saturating_sub(1)).collect::<String>())
         } else {
             format!("    {}", clean_msg)
         };
 
-        let line3 = Paragraph::new(truncated).style(Style::default().fg(MUTED));
-        frame.render_widget(line3, line3_area);
+        let line2 = Paragraph::new(truncated).style(Style::default().fg(MUTED));
+        frame.render_widget(line2, line2_area);
     }
 }

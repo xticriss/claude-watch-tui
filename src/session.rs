@@ -54,6 +54,9 @@ pub struct Session {
     pub cpu_usage: f32,
     /// Seconds since last activity (JSONL modification)
     pub last_activity_secs: u64,
+    /// Process ID (for killing)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,7 +135,7 @@ pub fn get_sessions() -> Vec<Session> {
             .and_then(|shell_pid| pane_map.get(&shell_pid).cloned());
 
         // Parse the Nth most recent JSONL file
-        if let Some(session) = parse_project_session(project_dir, &cwd, tmux_location, process.cpu_usage, jsonl_index) {
+        if let Some(session) = parse_project_session(project_dir, &cwd, tmux_location, process.cpu_usage, jsonl_index, process.pid) {
             sessions.push(session);
         }
     }
@@ -152,6 +155,7 @@ fn parse_project_session(
     tmux_location: Option<TmuxLocation>,
     cpu_usage: f32,
     jsonl_index: usize,
+    pid: u32,
 ) -> Option<Session> {
     // Find JSONL files sorted by modification time (excluding agent-*.jsonl)
     let mut jsonl_files: Vec<_> = fs::read_dir(project_dir).ok()?
@@ -271,6 +275,7 @@ fn parse_project_session(
         tmux_target,
         cpu_usage,
         last_activity_secs: file_age as u64,
+        pid: Some(pid),
     })
 }
 

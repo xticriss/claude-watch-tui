@@ -86,6 +86,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "dirs",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

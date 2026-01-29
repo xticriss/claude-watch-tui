@@ -20,6 +20,7 @@ serde_json = "1.0"
 # Utilities
 dirs = "5.0"
 chrono = "0.4"
+libc = "0.2"
 
 [profile.release]
 lto = true
