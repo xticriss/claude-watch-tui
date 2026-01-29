@@ -118,10 +118,11 @@ bind-key -n M-c display-popup -E -w 80% -h 80% "claude-watch"
 
 ## JSON output
 
-For scripting, use the `--list` flag to get sessions as JSON:
+For scripting, get sessions as JSON:
 
 ```bash
-claude-watch --list
+claude-watch --list      # Running sessions only
+claude-watch --list-all  # Running + historical sessions
 ```
 
 ## Contributing

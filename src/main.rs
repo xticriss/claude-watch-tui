@@ -139,16 +139,11 @@ impl App {
         self.refresh_sessions();
     }
 
-    /// Delete a historical session's JSONL file
+    /// Delete a historical session
     fn delete_selected(&mut self) {
         if let Some(session) = self.sessions.get(self.selected) {
-            // Only delete historical sessions
-            if session.is_running {
-                return;
-            }
-            // Delete the JSONL file
-            if let Some(ref path) = session.jsonl_path {
-                let _ = std::fs::remove_file(path);
+            if !session.is_running {
+                session::delete_session(session);
                 self.refresh_sessions();
             }
         }
@@ -160,6 +155,11 @@ fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--list" || a == "-l") {
         let sessions = session::get_sessions();
+        println!("{}", serde_json::to_string_pretty(&sessions).unwrap_or_default());
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--list-all") {
+        let sessions = session::get_all_sessions();
         println!("{}", serde_json::to_string_pretty(&sessions).unwrap_or_default());
         return Ok(());
     }
@@ -192,19 +192,14 @@ fn main() -> io::Result<()> {
                         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
                         KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                         KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
-                        KeyCode::Enter => {
+                        KeyCode::Enter | KeyCode::Char('r') => {
                             if app.go_to_selected() {
                                 app.should_quit = true;
                             }
                         }
                         KeyCode::Char('R') => app.refresh_sessions(),
-                        KeyCode::Char('r') => {
-                            if app.go_to_selected() {
-                                app.should_quit = true;
-                            }
-                        }
                         KeyCode::Char('x') => app.kill_selected(),
-                        KeyCode::Char('D') => app.delete_selected(),
+                        KeyCode::Char('D') | KeyCode::Char('d') => app.delete_selected(),
                         KeyCode::Tab => app.toggle_view_mode(),
                         // Number shortcuts 1-9
                         KeyCode::Char(c @ '1'..='9') => {

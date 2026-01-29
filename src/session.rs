@@ -276,6 +276,29 @@ pub fn get_all_sessions() -> Vec<Session> {
     all_sessions
 }
 
+/// Delete a session's JSONL file and remove from sessions-index.json
+pub fn delete_session(session: &Session) {
+    if let Some(ref path) = session.jsonl_path {
+        // Delete the JSONL file
+        let _ = fs::remove_file(path);
+
+        // Remove entry from sessions-index.json
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            let index_path = parent.join("sessions-index.json");
+            if let Ok(content) = fs::read_to_string(&index_path) {
+                if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(entries) = json.get_mut("entries").and_then(|e| e.as_array_mut()) {
+                        entries.retain(|e| {
+                            e.get("sessionId").and_then(|s| s.as_str()) != Some(&session.id)
+                        });
+                        let _ = fs::write(&index_path, serde_json::to_string_pretty(&json).unwrap_or_default());
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Parse ISO timestamp and return seconds ago
 fn parse_iso_age(iso_str: &str) -> u64 {
     use chrono::{DateTime, Utc};
