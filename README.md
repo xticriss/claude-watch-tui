@@ -6,6 +6,8 @@ A fast, beautiful TUI for monitoring and managing your [Claude Code](https://doc
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
+![claude-watch screenshot](assets/screenshot.png)
+
 ## Why?
 
 If you're running multiple Claude Code sessions across different projects, keeping track of them becomes challenging. **claude-watch** gives you a bird's-eye view of all your sessions:
