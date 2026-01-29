@@ -19,7 +19,7 @@ const TEXT: Color = Color::Rgb(224, 222, 244);      // #e0def4
 const SURFACE: Color = Color::Rgb(42, 39, 63);      // #2a273f
 const OVERLAY: Color = Color::Rgb(57, 53, 82);      // #393552
 
-pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messages: &[LogMessage]) {
+pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messages: &[LogMessage], view_mode: &str) {
     let area = frame.area();
 
     // Vertical stack: sessions on top, log below
@@ -35,8 +35,9 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messag
     let log_area = main_chunks[1];
 
     // Left pane: session list
+    let title = format!(" Claude ({}) ", view_mode);
     let block = Block::default()
-        .title(" Claude ")
+        .title(title)
         .title_style(Style::default().bold().fg(GOLD))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(SUBTLE))
@@ -100,7 +101,9 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messag
         Span::styled("◐ ", Style::default().fg(FOAM)),
         Span::styled("wait  ", Style::default().fg(SUBTLE)),
         Span::styled("✓ ", Style::default().fg(SUBTLE)),
-        Span::styled("idle", Style::default().fg(SUBTLE)),
+        Span::styled("idle  ", Style::default().fg(SUBTLE)),
+        Span::styled("○ ", Style::default().fg(MUTED)),
+        Span::styled("hist", Style::default().fg(SUBTLE)),
     ])).alignment(Alignment::Center);
     frame.render_widget(legend, legend_area);
 
@@ -112,8 +115,12 @@ pub fn draw(frame: &mut Frame, sessions: &[Session], selected: usize, log_messag
         Span::styled(" nav ", Style::default().fg(SUBTLE)),
         Span::styled("↵", Style::default().fg(FOAM)),
         Span::styled(" go ", Style::default().fg(SUBTLE)),
+        Span::styled("r", Style::default().fg(FOAM)),
+        Span::styled(" resume ", Style::default().fg(SUBTLE)),
         Span::styled("x", Style::default().fg(FOAM)),
         Span::styled(" kill ", Style::default().fg(SUBTLE)),
+        Span::styled("Tab", Style::default().fg(FOAM)),
+        Span::styled(" view ", Style::default().fg(SUBTLE)),
         Span::styled("q", Style::default().fg(FOAM)),
         Span::styled(" quit", Style::default().fg(SUBTLE)),
     ])).alignment(Alignment::Center);
@@ -134,11 +141,16 @@ fn format_relative_time(secs: u64) -> String {
 }
 
 fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selected: bool, index: usize) {
-    let (status_icon, status_color) = match session.status {
-        SessionStatus::Thinking => ("↻", GOLD),      // working/thinking
-        SessionStatus::Processing => ("↻", PINE),    // working/processing
-        SessionStatus::Waiting => ("◐", FOAM),       // waiting for input
-        SessionStatus::Idle => ("✓", SUBTLE),        // idle/done
+    // Historical sessions get a different icon
+    let (status_icon, status_color) = if !session.is_running {
+        ("○", MUTED)  // Historical/not running
+    } else {
+        match session.status {
+            SessionStatus::Thinking => ("↻", GOLD),      // working/thinking
+            SessionStatus::Processing => ("↻", PINE),    // working/processing
+            SessionStatus::Waiting => ("◐", FOAM),       // waiting for input
+            SessionStatus::Idle => ("✓", SUBTLE),        // idle/done
+        }
     };
 
     let bg_color = if selected { OVERLAY } else { Color::Reset };
@@ -163,10 +175,12 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
     if inner.height >= 1 {
         let line1_area = Rect::new(inner.x, inner.y, inner.width, 1);
 
+        // Dim historical sessions slightly
+        let text_color = if session.is_running { TEXT } else { MUTED };
         let name_style = if selected {
-            Style::default().bold().fg(TEXT)
+            Style::default().bold().fg(text_color)
         } else {
-            Style::default().fg(TEXT)
+            Style::default().fg(text_color)
         };
 
         // Index number (1-9, then nothing)
@@ -209,10 +223,18 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
         frame.render_widget(Paragraph::new(line1), line1_area);
     }
 
-    // Line 2: last message preview (shorter, cleaner)
+    // Line 2: last message preview (or first_prompt for historical)
     if inner.height >= 2 {
         let line2_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
-        let message = session.last_message.as_deref().unwrap_or("—");
+
+        // For historical sessions, prefer first_prompt; for running, use last_message
+        let message = if !session.is_running {
+            session.first_prompt.as_deref()
+                .or(session.last_message.as_deref())
+                .unwrap_or("—")
+        } else {
+            session.last_message.as_deref().unwrap_or("—")
+        };
 
         // Clean up message: remove newlines, collapse whitespace
         let clean_msg: String = message
@@ -230,7 +252,9 @@ fn render_session_card(frame: &mut Frame, session: &Session, area: Rect, selecte
             format!("    {}", clean_msg)
         };
 
-        let line2 = Paragraph::new(truncated).style(Style::default().fg(MUTED));
+        // Dim historical session messages
+        let msg_color = if session.is_running { MUTED } else { SUBTLE };
+        let line2 = Paragraph::new(truncated).style(Style::default().fg(msg_color));
         frame.render_widget(line2, line2_area);
     }
 }

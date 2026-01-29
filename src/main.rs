@@ -15,12 +15,35 @@ use ratatui::Terminal;
 use session::Session;
 use log_view::LogMessage;
 
+#[derive(Clone, Copy, PartialEq)]
+enum ViewMode {
+    Running,
+    All,
+}
+
+impl ViewMode {
+    fn toggle(&self) -> Self {
+        match self {
+            ViewMode::Running => ViewMode::All,
+            ViewMode::All => ViewMode::Running,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            ViewMode::Running => "Running",
+            ViewMode::All => "All",
+        }
+    }
+}
+
 struct App {
     sessions: Vec<Session>,
     selected: usize,
     should_quit: bool,
     log_messages: Vec<LogMessage>,
     last_log_mtime: Option<SystemTime>,
+    view_mode: ViewMode,
 }
 
 impl App {
@@ -31,11 +54,15 @@ impl App {
             should_quit: false,
             log_messages: Vec::new(),
             last_log_mtime: None,
+            view_mode: ViewMode::Running,
         }
     }
 
     fn refresh_sessions(&mut self) {
-        self.sessions = session::get_sessions();
+        self.sessions = match self.view_mode {
+            ViewMode::Running => session::get_sessions(),
+            ViewMode::All => session::get_all_sessions(),
+        };
         // Keep selection in bounds
         if self.selected >= self.sessions.len() && !self.sessions.is_empty() {
             self.selected = self.sessions.len() - 1;
@@ -81,25 +108,35 @@ impl App {
         }
     }
 
-    fn go_to_selected(&self) {
+    /// Go to or resume selected session
+    fn go_to_selected(&self) -> bool {
         if let Some(session) = self.sessions.get(self.selected) {
-            if let Some(ref loc) = session.tmux_location {
-                tmux::switch_to_window(loc);
+            // Running session with tmux: switch to it
+            if session.is_running {
+                if let Some(ref loc) = session.tmux_location {
+                    tmux::switch_to_window(loc);
+                    return true;
+                }
             }
+            // Otherwise: resume in new tmux window
+            tmux::new_window_with_command(&session.project_name, &session.project_path, &session.id);
+            return true;
         }
+        false
     }
 
     fn kill_selected(&mut self) {
         if let Some(session) = self.sessions.get(self.selected) {
             if let Some(pid) = session.pid {
-                // Send SIGTERM to gracefully terminate
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-                // Refresh after kill
+                unsafe { libc::kill(pid as i32, libc::SIGTERM); }
                 self.refresh_sessions();
             }
         }
+    }
+
+    fn toggle_view_mode(&mut self) {
+        self.view_mode = self.view_mode.toggle();
+        self.refresh_sessions();
     }
 }
 
@@ -130,7 +167,7 @@ fn main() -> io::Result<()> {
     let mut last_log_tick = std::time::Instant::now();
 
     loop {
-        terminal.draw(|f| ui::draw(f, &app.sessions, app.selected, &app.log_messages))?;
+        terminal.draw(|f| ui::draw(f, &app.sessions, app.selected, &app.log_messages, app.view_mode.label()))?;
 
         let timeout = log_tick_rate.saturating_sub(last_log_tick.elapsed());
         if event::poll(timeout)? {
@@ -141,11 +178,18 @@ fn main() -> io::Result<()> {
                         KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                         KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
                         KeyCode::Enter => {
-                            app.go_to_selected();
-                            app.should_quit = true;
+                            if app.go_to_selected() {
+                                app.should_quit = true;
+                            }
                         }
-                        KeyCode::Char('r') => app.refresh_sessions(),
+                        KeyCode::Char('R') => app.refresh_sessions(),
+                        KeyCode::Char('r') => {
+                            if app.go_to_selected() {
+                                app.should_quit = true;
+                            }
+                        }
                         KeyCode::Char('x') => app.kill_selected(),
+                        KeyCode::Tab => app.toggle_view_mode(),
                         // Number shortcuts 1-9
                         KeyCode::Char(c @ '1'..='9') => {
                             let idx = (c as usize) - ('1' as usize);

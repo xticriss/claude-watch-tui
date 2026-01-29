@@ -54,3 +54,25 @@ pub fn switch_to_window(location: &TmuxLocation) {
         .status();
 }
 
+/// Create a new tmux window with claude --resume command
+pub fn new_window_with_command(window_name: &str, project_path: &str, session_id: &str) {
+    let cmd = format!(
+        "cd '{}' && claude --resume {}",
+        project_path.replace('\'', "'\\''"),
+        session_id
+    );
+
+    // Get current tmux session name (works from popups too)
+    let target = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| format!("{}:", s.trim()))
+        .unwrap_or_else(|| ":".to_string());
+
+    let _ = Command::new("tmux")
+        .args(["new-window", "-t", &target, "-n", window_name, &cmd])
+        .status();
+}
+

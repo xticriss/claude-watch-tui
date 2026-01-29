@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::process::{find_claude_processes, get_shell_pid};
 use crate::tmux::{get_pane_map, TmuxLocation};
 
+// Historical session limit
+const HISTORY_LIMIT: usize = 20;
+
 // Constants
 const JSONL_LINES_TO_SCAN: usize = 100;
 const RECENTLY_MODIFIED_THRESHOLD_SECS: f32 = 3.0;
@@ -57,6 +60,41 @@ pub struct Session {
     /// Process ID (for killing)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// Whether this session is currently running
+    pub is_running: bool,
+    /// First prompt from sessions-index.json (for historical sessions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_prompt: Option<String>,
+    /// Message count from sessions-index.json
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u32>,
+    /// Creation timestamp (ISO format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+/// Entry from sessions-index.json
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionIndexEntry {
+    session_id: String,
+    #[allow(dead_code)]
+    full_path: String,
+    first_prompt: Option<String>,
+    message_count: u32,
+    created: String,
+    modified: String,
+    project_path: String,
+    #[serde(default)]
+    is_sidechain: bool,
+}
+
+/// Container for sessions-index.json
+#[derive(Debug, Deserialize)]
+struct SessionIndex {
+    #[allow(dead_code)]
+    version: u32,
+    entries: Vec<SessionIndexEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +186,105 @@ pub fn get_sessions() -> Vec<Session> {
     sessions
 }
 
+/// Get all sessions (running + historical from sessions-index.json)
+pub fn get_all_sessions() -> Vec<Session> {
+    // Start with running sessions
+    let running_sessions = get_sessions();
+    let running_ids: std::collections::HashSet<String> = running_sessions.iter()
+        .map(|s| s.id.clone())
+        .collect();
+
+    let claude_dir = match dirs::home_dir() {
+        Some(h) => h.join(".claude").join("projects"),
+        None => return running_sessions,
+    };
+
+    if !claude_dir.exists() {
+        return running_sessions;
+    }
+
+    // Collect historical sessions from all sessions-index.json files
+    let mut historical: Vec<Session> = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&claude_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let index_path = path.join("sessions-index.json");
+            if !index_path.exists() {
+                continue;
+            }
+
+            // Parse sessions-index.json
+            if let Ok(content) = fs::read_to_string(&index_path) {
+                if let Ok(index) = serde_json::from_str::<SessionIndex>(&content) {
+                    for entry in index.entries {
+                        // Skip sidechains and already-running sessions
+                        if entry.is_sidechain || running_ids.contains(&entry.session_id) {
+                            continue;
+                        }
+
+                        // Calculate age from modified timestamp
+                        let last_activity_secs = parse_iso_age(&entry.modified);
+
+                        // Extract project name from path
+                        let project_name = entry.project_path
+                            .split('/')
+                            .filter(|s| !s.is_empty())
+                            .last()
+                            .unwrap_or("Unknown")
+                            .to_string();
+
+                        historical.push(Session {
+                            id: entry.session_id,
+                            project_name,
+                            project_path: entry.project_path,
+                            status: SessionStatus::Idle,
+                            last_message: entry.first_prompt.clone(),
+                            tmux_location: None,
+                            tmux_target: None,
+                            cpu_usage: 0.0,
+                            last_activity_secs,
+                            pid: None,
+                            is_running: false,
+                            first_prompt: entry.first_prompt,
+                            message_count: Some(entry.message_count),
+                            created_at: Some(entry.created),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort historical by recency (most recent first)
+    historical.sort_by(|a, b| a.last_activity_secs.cmp(&b.last_activity_secs));
+
+    // Take only the most recent HISTORY_LIMIT
+    historical.truncate(HISTORY_LIMIT);
+
+    // Combine: running first, then historical
+    let mut all_sessions = running_sessions;
+    all_sessions.extend(historical);
+
+    all_sessions
+}
+
+/// Parse ISO timestamp and return seconds ago
+fn parse_iso_age(iso_str: &str) -> u64 {
+    use chrono::{DateTime, Utc};
+    if let Ok(dt) = DateTime::parse_from_rfc3339(iso_str) {
+        let now = Utc::now();
+        let duration = now.signed_duration_since(dt.with_timezone(&Utc));
+        duration.num_seconds().max(0) as u64
+    } else {
+        // Fallback: very old
+        999999
+    }
+}
 
 fn parse_project_session(
     project_dir: &PathBuf,
@@ -276,6 +413,10 @@ fn parse_project_session(
         cpu_usage,
         last_activity_secs: file_age as u64,
         pid: Some(pid),
+        is_running: true,
+        first_prompt: None,
+        message_count: None,
+        created_at: None,
     })
 }
 
